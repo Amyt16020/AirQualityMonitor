@@ -1,0 +1,52 @@
+from picamera2 import Picamera2
+#from picamera2 import Preview
+import time
+import cv2
+import numpy as np
+
+
+def picam2Preview():
+	picam2 = Picamera2()
+	
+	preview_config = picam2.create_preview_configuration(main={"size": (800, 600)})
+	picam2.configure(preview_config)
+	
+	picam2.start_preview(Preview.QTGL)
+	
+	picam2.start()
+	
+	try:
+		time.sleep(10)
+	finally:
+		picam2.stop_preview()
+		picam2.stop()
+	
+	print('Done.')
+
+
+def cv2Preview():
+	picam2 = Picamera2()
+	preview_config = picam2.create_preview_configuration(main={"size": (800, 600)})
+	picam2.configure(preview_config)
+	picam2.start()
+	
+	try:
+		while True:
+			frame = picam2.capture_array()
+			frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+			
+			cv2.imshow("Picamera2 Feed", frame_bgr)
+			
+			if cv2.waitKey(1) & 0xFF == ord('q'):
+				break
+	finally:
+		picam2.stop()
+		cv2.destroyAllWindows()
+		
+	
+
+def main():
+	cv2Preview()
+
+if __name__ == "__main__":
+    main()
