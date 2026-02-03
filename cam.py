@@ -1,6 +1,7 @@
 from picamera2 import Picamera2
 #from picamera2 import Preview
 import time
+from datetime import datetime
 import cv2
 import numpy as np
 
@@ -30,6 +31,8 @@ def cv2Preview():
 	picam2.configure(preview_config)
 	picam2.start()
 	
+	#filename = "amy_001.png"
+
 	try:
 		while True:
 			frame = picam2.capture_array()
@@ -37,8 +40,20 @@ def cv2Preview():
 			
 			cv2.imshow("Picamera2 Feed", frame_bgr)
 			
-			if cv2.waitKey(1) & 0xFF == ord('q'):
+			key = cv2.waitKey(1) & 0xFF
+			if key == ord('q'):
 				break
+			elif key == ord('c'):
+				now = datetime.now()
+				filename = now.strftime("%H-%M-%S.png")
+				success = cv2.imwrite(filename, frame_bgr)
+				if success:
+					print("Capture image done")
+				else:
+					print("Error: failed to save image")
+			#if cv2.waitKey(1) & 0xFF == ord('q'):
+			#	break
+#	except KeyboardInterrupt:
 	finally:
 		picam2.stop()
 		cv2.destroyAllWindows()
