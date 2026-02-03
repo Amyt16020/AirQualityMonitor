@@ -1,10 +1,11 @@
 from picamera2 import Picamera2
 #from picamera2 import Preview
+from libcamera import controls
 import time
 from datetime import datetime
 import cv2
 import numpy as np
-
+from textrecognize import func1
 
 def picam2Preview():
 	picam2 = Picamera2()
@@ -31,6 +32,8 @@ def cv2Preview():
 	picam2.configure(preview_config)
 	picam2.start()
 	
+	picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
+	
 	#filename = "amy_001.png"
 
 	try:
@@ -38,6 +41,7 @@ def cv2Preview():
 			frame = picam2.capture_array()
 			frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 			
+			frame_bgr = func1(frame_bgr)
 			cv2.imshow("Picamera2 Feed", frame_bgr)
 			
 			key = cv2.waitKey(1) & 0xFF
