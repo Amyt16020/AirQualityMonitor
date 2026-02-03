@@ -5,7 +5,8 @@ import time
 from datetime import datetime
 import cv2
 import numpy as np
-from textrecognize import func1
+#from textrecognize import func1
+from recog1 import detect_text
 
 def picam2Preview():
 	picam2 = Picamera2()
@@ -41,7 +42,8 @@ def cv2Preview():
 			frame = picam2.capture_array()
 			frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 			
-			frame_bgr = func1(frame_bgr)
+			#frame_bgr = func1(frame_bgr)
+			frame_bgr = detect_text(frame_bgr)
 			cv2.imshow("Picamera2 Feed", frame_bgr)
 			
 			key = cv2.waitKey(1) & 0xFF
