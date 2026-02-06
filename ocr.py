@@ -13,7 +13,7 @@ def ssocr_7seg(cv2_img, decimal=True):
 	if decimal:
 		cli_command = ["ssocr", "-d", "-1", "invert", "-"]
 	else:
-		cli_command = ["ssocr", "-d", "-1", "omit_decimal", "invert", "-"]
+		cli_command = ["ssocr", "-d", "-1", "--omit-decimal-point", "invert", "-"]
 	
 	try:
 		process = subprocess.Popen(
