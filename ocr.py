@@ -1,4 +1,5 @@
 import subprocess
+import pytesseract
 import cv2
 import numpy as np
 
@@ -28,6 +29,13 @@ def ssocr_7seg(cv2_img, decimal=True):
 		return stdout_data.decode().strip()
 	except subprocess.CalledProcessError as e:
 		return f"Error: {e.output.decode()}"
+
+
+def tesseract_7seg(cv2_img):
+	custom_config = r'--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.'
+	text = pytesseract.image_to_string(cv2_img, config=custom_config)
+	return text
+
 
 def preprocess(image):
 	gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
