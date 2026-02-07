@@ -38,13 +38,6 @@ def picam2Preview():
 	print('Done.')
 
 
-def send_warning(gas_name:str, value:float):
-	now = datetime.now()
-	time_str = now.strftime("%Y-%m-%d %H:%M:%S")
-	msg = f"\nWARNING!!\n{gas_name} exceed limit ({value}) ppm)\nat {time_str}"
-	notify.send_telegram_msg(info["telegram"], msg)
-
-
 def cv2Preview():
 	liveview_w = 800
 	liveview_h = 600
@@ -59,13 +52,20 @@ def cv2Preview():
 		exit()
 	GAS_URL = info["google"]["url"]
 	
+	def send_warning(gas_name:str, value:float):
+		now = datetime.now()
+		time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+		msg = f"\nWARNING!!\n{gas_name} exceed limit ({value}) ppm)\nat {time_str}"
+		notify.send_telegram_msg(info["telegram"], msg)
+
 	# ROI data: list of dictionaries containing name and coordinates [x, y, w, h]
 	rois = [
-		{"name": "HCHO", "coords": [250, 50, 120, 50]  },  # ROI 1
-		{"name": "CO",   "coords": [250, 200, 110, 48] },  # ROI 2
-		{"name": "CO2",  "coords": [250, 350, 110, 48] }   # ROI 3
+		{"name": "HCHO", "coords": [250, 50, 110, 45],  "limit": 0.1 },  # ROI 1
+		{"name": "CO",   "coords": [250, 200, 100, 40], "limit": 50.0 },  # ROI 2
+		{"name": "CO2",  "coords": [250, 350, 100, 40], "limit": 1000.0 }   # ROI 3
 	]
-	
+
+	notified = False
 	active_idx = 0  # Default to the first ROI
 	step = 10       # Initial step size, pixels to move per keypress
 	
@@ -81,6 +81,14 @@ def cv2Preview():
 
 	# Fan control
 	fan_enabled = False
+	def control_fan(on):
+		nonlocal fan_enabled
+		if on and not fan_enabled:
+			fan_enabled = True
+			asyncio.run(p105_on(info["p105"]))
+		elif not on and fan_enabled:
+			fan_enabled = False
+			asyncio.run(p105_off(info["p105"]))
 
 	picam2 = Picamera2()
 	preview_config = picam2.create_preview_configuration(main={"size": (liveview_w, liveview_h)})
@@ -133,7 +141,9 @@ def cv2Preview():
 			
 			# --- Periodic Logic ---
 			if timer_enabled and (current_time - last_save_time >= save_interval):
+				any_hazard = False
 				results = []
+				msg = ""
 				for roi in rois:
 					name = roi["name"]
 					x, y, w, h = roi["coords"]
@@ -143,22 +153,30 @@ def cv2Preview():
 					try:
 						ocr_str = ocr.ssocr_7seg(processed)
 						value = float(ocr_str)
+						# Check against limit
+						is_over_limit = value > roi["limit"]
+						if is_over_limit:
+							any_hazard = True
 						results.append(value)
 					except ValueError:
 						results.append("n/a")
 				last_save_time = current_time # Reset timer
 				
 				print(f"-- {results[0]} | {results[1]} | {results[2]}")
-				if type(result[0) is float:
-					if (result[0] > 0.098): # HCHO
-						send_warning("HCHO", result[0])
-				if type(result[1]) is float:
-					if (result[1] > 50): # CO
-						send_warning("CO", result[1])
-				if type(result[2]) is float:
-					if (result[2] > 1000):
-						send_warning("CO2", result[2])
-
+				if any_hazard:
+					if not fan_enabled:
+						control_fan(True)
+					if not notified:
+						notified = True
+						now = datetime.now()
+						time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+						msg = f"WARNING!!\nHCHO: {results[0]}\nCO: {results[1]}\nCO2: {results[2]}\nat {time_str}"
+						notify.send_telegram_msg(info["telegram"], msg)
+				else:
+					if fan_enabled:
+						control_fan(False)
+					if notified:
+						notified = False # Reset flag of notify
 				detect_count += 1
 				if detect_count >= log_interval:
 					logger.upload_data(GAS_URL,
@@ -192,11 +210,10 @@ def cv2Preview():
 
 			# 4. Toggle FAN ON/OFF
 			elif key == ord('j'):
-				fan_enabled = not fan_enabled
 				if fan_enabled:
-					asyncio.run(p105_on(info["p105"]))
+					control_fan(False)
 				else:
-					asyncio.run(p105_off(info["p105"]))
+					control_fan(True)
 			elif key == ord('k'):
 				now = datetime.now()
 				time_str = now.strftime("%Y-%m-%d %H:%M:%S")
