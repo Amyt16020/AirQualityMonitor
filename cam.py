@@ -1,14 +1,23 @@
+#!/home/amy/AirQualityMonitor/env_amy/bin/python
+
 from picamera2 import Picamera2
 #from picamera2 import Preview
 from libcamera import controls
+import os
 import time
+import json
+import asyncio
 from datetime import datetime
 import cv2
 import numpy as np
+
 import ocr
 import logger
 import notify
+from remoteplug import p105_on, p105_off
 
+
+INFO_FILE = "info.json"
 
 def picam2Preview():
 	picam2 = Picamera2()
@@ -29,9 +38,26 @@ def picam2Preview():
 	print('Done.')
 
 
+def send_warning(gas_name:str, value:float):
+	now = datetime.now()
+	time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+	msg = f"\nWARNING!!\n{gas_name} exceed limit ({value}) ppm)\nat {time_str}"
+	notify.send_telegram_msg(info["telegram"], msg)
+
+
 def cv2Preview():
 	liveview_w = 800
 	liveview_h = 600
+	
+	# Load information
+	if os.path.exists(INFO_FILE):
+		with open(INFO_FILE, "r") as f:
+			info = json.load(f)
+			print(info)
+	else:
+		print("Error: Failed to load the INFO file.")
+		exit()
+	GAS_URL = info["google"]["url"]
 	
 	# ROI data: list of dictionaries containing name and coordinates [x, y, w, h]
 	rois = [
@@ -53,6 +79,9 @@ def cv2Preview():
 	print("--- Gas Monitor ROI Calibration ---")
 	print("Keys: 1=HCHO, 2=CO, 3=CO2 | WASD=Move | T=Toggle Step | Q=Quit")
 
+	# Fan control
+	fan_enabled = False
+
 	picam2 = Picamera2()
 	preview_config = picam2.create_preview_configuration(main={"size": (liveview_w, liveview_h)})
 	picam2.configure(preview_config)
@@ -60,10 +89,6 @@ def cv2Preview():
 	
 	picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
 	
-	with open("./url.txt", "rt") as f:
-		GAS_URL = f.readline()
-		GAS_URL = GAS_URL.rstrip()
-
 	try:
 		while True:
 			frame = picam2.capture_array()
@@ -122,7 +147,18 @@ def cv2Preview():
 					except ValueError:
 						results.append("n/a")
 				last_save_time = current_time # Reset timer
+				
 				print(f"-- {results[0]} | {results[1]} | {results[2]}")
+				if type(result[0) is float:
+					if (result[0] > 0.098): # HCHO
+						send_warning("HCHO", result[0])
+				if type(result[1]) is float:
+					if (result[1] > 50): # CO
+						send_warning("CO", result[1])
+				if type(result[2]) is float:
+					if (result[2] > 1000):
+						send_warning("CO2", result[2])
+
 				detect_count += 1
 				if detect_count >= log_interval:
 					logger.upload_data(GAS_URL,
@@ -154,6 +190,19 @@ def cv2Preview():
 					last_save_time = time.time()  # Reset timer when turned on
 				print(f"Timer Enabled: {timer_enabled}")
 
+			# 4. Toggle FAN ON/OFF
+			elif key == ord('j'):
+				fan_enabled = not fan_enabled
+				if fan_enabled:
+					asyncio.run(p105_on(info["p105"]))
+				else:
+					asyncio.run(p105_off(info["p105"]))
+			elif key == ord('k'):
+				now = datetime.now()
+				time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+				msg = f"\n<{time_str}>\nMessage from Raspberry Pi."
+				notify.send_telegram_msg(info["telegram"], msg)
+			
 			# 5. Exit
 			elif key == ord('q'):
 				break
