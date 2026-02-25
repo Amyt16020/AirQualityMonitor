@@ -60,9 +60,9 @@ def cv2Preview():
 
 	# ROI data: list of dictionaries containing name and coordinates [x, y, w, h]
 	rois = [
-		{"name": "HCHO", "coords": [250, 50, 110, 45],  "limit": 0.1 },  # ROI 1
-		{"name": "CO",   "coords": [250, 200, 100, 40], "limit": 50.0 },  # ROI 2
-		{"name": "CO2",  "coords": [250, 350, 100, 40], "limit": 1000.0 }   # ROI 3
+		{"name": "HCHO", "coords": [250, 50, 110, 45],  "digits": 5, "limit": 0.1 },  # ROI 1
+		{"name": "CO",   "coords": [250, 200, 100, 40], "digits": 3, "limit": 50.0 },  # ROI 2
+		{"name": "CO2",  "coords": [250, 350, 100, 40], "digits": 4, "limit": 1000.0 }   # ROI 3
 	]
 
 	notified = False
@@ -73,7 +73,7 @@ def cv2Preview():
 	last_save_time = time.time()
 	save_interval = 60  # seconds
 	detect_count = 0
-	log_interval = 60   # (save_interval * log_interval) seconds
+	log_interval = 1 #60   # (save_interval * log_interval) seconds
 	timer_enabled = False  # Timer starts OFF by default
 	
 	print("--- Gas Monitor ROI Calibration ---")
@@ -97,6 +97,8 @@ def cv2Preview():
 	
 	picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
 	
+	ocr_total = [0, 0, 0]
+	ocr_error = [0, 0, 0]
 	try:
 		while True:
 			frame = picam2.capture_array()
@@ -143,26 +145,48 @@ def cv2Preview():
 			if timer_enabled and (current_time - last_save_time >= save_interval):
 				any_hazard = False
 				results = []
+				success_rate = []
 				msg = ""
-				for roi in rois:
+				for idx, roi in enumerate(rois):
+					value_valid = False
 					name = roi["name"]
 					x, y, w, h = roi["coords"]
 					# Crop the ROI from the frame: frame[y1:y2, x1:x2]
 					roi_crop = frame_bgr[y:y+h, x:x+w]
-					processed = ocr.preprocess(roi_crop)
+					processed = ocr.preprocess(roi_crop, binarization=True, using_blur=True)
+					win_roi = name + "-ROI"
+					win_processed = name + "-processed"
+					cv2.imshow(win_roi, roi_crop)
+					cv2.imshow(win_processed, processed)
+					ocr_total[idx] += 1
 					try:
-						ocr_str = ocr.ssocr_7seg(processed)
-						value = float(ocr_str)
-						# Check against limit
-						is_over_limit = value > roi["limit"]
-						if is_over_limit:
-							any_hazard = True
-						results.append(value)
+						ret, ocr_str = ocr.ssocr_7seg(processed, roi["digits"])
+						if ret:
+							value = float(ocr_str)
+							# Check against limit
+							is_over_limit = value > roi["limit"]
+							if is_over_limit:
+								any_hazard = True
+							results.append(value)
+						else:
+							print(ocr_str)
+							results.append("n/a")
+							ocr_error[idx] += 1
 					except ValueError:
+						print(f"OCR output = {ocr_str}")
+						now = datetime.now()
+						time_str = now.strftime("%Y-%m-%d_%H_%M_%S")
+						err_name = "error/" + name + f"-{time_str}.png"
+						cv2.imwrite(err_name, roi_crop)
 						results.append("n/a")
+						ocr_error[idx] += 1
+					success_rate.append( (ocr_total[idx]-ocr_error[idx]) / ocr_total[idx])
+
 				last_save_time = current_time # Reset timer
 				
 				print(f"-- {results[0]} | {results[1]} | {results[2]}")
+				print(f"total OCR counts = {ocr_total[0]}")
+				print(f"   {success_rate[0]*100}% | {success_rate[1]*100}% | {success_rate[2]*100}%")
 				if any_hazard:
 					if not fan_enabled:
 						control_fan(True)
@@ -179,6 +203,7 @@ def cv2Preview():
 						notified = False # Reset flag of notify
 				detect_count += 1
 				if detect_count >= log_interval:
+					detect_count = 0
 					logger.upload_data(GAS_URL,
 						results[0], results[1], results[2], "n/a")
 
@@ -234,7 +259,6 @@ def cv2Preview():
 			elif key == ord('p'):
 				now = datetime.now()
 				timestamp_str = now.strftime("%H-%M-%S")
-				
 				imgs = []
 				results = []
 				for i, roi in enumerate(rois):

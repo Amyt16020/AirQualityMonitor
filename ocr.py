@@ -4,17 +4,14 @@ import cv2
 import numpy as np
 
 
-def ssocr_7seg(cv2_img, decimal=True):
+def ssocr_7seg(cv2_img, num_of_digits=-1):
 	success, encoded_image = cv2.imencode('.png', cv2_img)
 	if not success:
 		return "Error: failed to encode image"
 	
 	byte_data = encoded_image.tobytes()
 	
-	if decimal:
-		cli_command = ["ssocr", "-d", "-1", "invert", "-"]
-	else:
-		cli_command = ["ssocr", "-d", "-1", "--omit-decimal-point", "invert", "-"]
+	cli_command = ["ssocr", "-d", f"{num_of_digits}", "invert", "-"]
 	
 	try:
 		process = subprocess.Popen(
@@ -24,11 +21,15 @@ def ssocr_7seg(cv2_img, decimal=True):
 			stderr = subprocess.PIPE
 		)
 		stdout_data, stderr_data = process.communicate(input=byte_data)
-		if process.returncode != 0:
-			return f"SSOCR Error: {stderr_data.decode().strip()}"
-		return stdout_data.decode().strip()
+		if process.returncode == 0:
+			return True, stdout_data.decode().strip()
+#		elif process.returncode == 1:
+#			print(f"SSOCR Error({process.returncode}): {stderr_data.decode().strip()}")
+#			return stdout_data.decode().strip()
+		else:
+			return False, f"SSOCR Error({process.returncode}): {stderr_data.decode().strip()}"
 	except subprocess.CalledProcessError as e:
-		return f"Error: {e.output.decode()}"
+		return False, f"Error: {e.output.decode()}"
 
 
 def tesseract_7seg(cv2_img):
@@ -37,13 +38,26 @@ def tesseract_7seg(cv2_img):
 	return text
 
 
-def preprocess(image):
+def preprocess(image, using_blur=False, binarization=True, morphology=False):
 	gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 	contrast_enhanced = clahe.apply(gray)
-	blurred = cv2.GaussianBlur(contrast_enhanced, (5, 5), 0)
-	_, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-	kernel = np.ones((3, 3), np.uint8)
-	fixed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+	
+	if using_blur:
+		blurred = cv2.GaussianBlur(contrast_enhanced, (5, 5), 0)
+	else:
+		blurred = contrast_enhanced
+	
+	if binarization:
+		_, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+	else:
+		thresh = blurred
+	
+	if morphology:
+		kernel = np.ones((3, 3), np.uint8)
+		fixed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+	else:
+		fixed = thresh
+		
 	return fixed
 

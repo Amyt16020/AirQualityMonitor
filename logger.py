@@ -15,4 +15,4 @@ def upload_data(GAS_URL, v1, v2, v3, v4):
 		else:
 			print(f"Fail! Status code: {response.status_code}")
 	except Exception as e:
-		printf(f"Error: {e}")
+		print(f"Error: {e}")
