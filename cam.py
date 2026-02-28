@@ -18,6 +18,7 @@ from remoteplug import p105_on, p105_off
 
 
 INFO_FILE = "info.json"
+ROI_JSON = "roi.json"
 
 def picam2Preview():
 	picam2 = Picamera2()
@@ -36,6 +37,34 @@ def picam2Preview():
 		picam2.stop()
 	
 	print('Done.')
+
+def dump_ocr_fail_image(name:str, roi_crop, processed):
+	now = datetime.now()
+	time_str = now.strftime("%Y-%m-%d_%H_%M_%S")
+	roi_imgname = os.path.join("error", f"{time_str}-{name}-ROI.png")
+	cv2.imwrite(roi_imgname, roi_crop)
+	processed_imgname = os.path.join("error", f"{time_str}-{name}-Processed.png")
+	cv2.imwrite(processed_imgname, processed)
+
+def save_rois(rois) -> bool:
+	try:
+		with open(ROI_JSON, "w", encoding="utf-8") as f:
+			json.dump(rois, f, indent=4)
+			return True
+	except Exception as e:
+		print(f"Save ROIs Error: {e}")
+		return False
+
+def load_rois():
+	if not os.path.exists(ROI_JSON):
+		return None
+	try:
+		with open(ROI_JSON, "r", encoding="utf-8") as f:
+			rois = json.load(f)
+			return rois
+	except Exception as e:
+		print(f"Load ROIs Error: {e}")
+		return None
 
 
 def cv2Preview():
@@ -58,12 +87,19 @@ def cv2Preview():
 		msg = f"\nWARNING!!\n{gas_name} exceed limit ({value}) ppm)\nat {time_str}"
 		notify.send_telegram_msg(info["telegram"], msg)
 
-	# ROI data: list of dictionaries containing name and coordinates [x, y, w, h]
-	rois = [
-		{"name": "HCHO", "coords": [250, 50, 110, 45],  "digits": 5, "limit": 0.1 },  # ROI 1
-		{"name": "CO",   "coords": [250, 200, 100, 40], "digits": 3, "limit": 50.0 },  # ROI 2
-		{"name": "CO2",  "coords": [250, 350, 100, 40], "digits": 4, "limit": 1000.0 }   # ROI 3
-	]
+	# Load adjusted ROI information
+	rois = load_rois()
+	
+	if not rois:
+		# ROI data: list of dictionaries containing name and coordinates [x, y, w, h]
+		rois = [
+			{"name": "HCHO",  "coords": [250, 50, 100, 40],  "digits": 5, "limit": 0.1 },  # ROI 1
+			{"name": "CO",    "coords": [250, 200, 100, 40], "digits": 3, "limit": 50.0 },  # ROI 2
+			{"name": "CO2",   "coords": [250, 350, 100, 40], "digits": 4, "limit": 1000.0 },   # ROI 3
+			{"name": "TVOC",  "coords": [250, 150, 100, 40], "digits": 5, "limit": 0.1 },
+			{"name": "PM10",  "coords": [250, 400, 100, 40], "digits": 3, "limit": 50.0 },
+			{"name": "PM2.5", "coords": [250, 450, 100, 40], "digits": 3, "limit": 50.0 }
+		]
 
 	notified = False
 	active_idx = 0  # Default to the first ROI
@@ -71,7 +107,7 @@ def cv2Preview():
 	
 	# Timer setup
 	last_save_time = time.time()
-	save_interval = 60  # seconds
+	save_interval = 30  # seconds
 	detect_count = 0
 	log_interval = 1 #60   # (save_interval * log_interval) seconds
 	timer_enabled = False  # Timer starts OFF by default
@@ -97,8 +133,8 @@ def cv2Preview():
 	
 	picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
 	
-	ocr_total = [0, 0, 0]
-	ocr_error = [0, 0, 0]
+	ocr_total = [0, 0, 0, 0, 0, 0]
+	ocr_error = [0, 0, 0, 0, 0, 0]
 	try:
 		while True:
 			frame = picam2.capture_array()
@@ -153,7 +189,15 @@ def cv2Preview():
 					x, y, w, h = roi["coords"]
 					# Crop the ROI from the frame: frame[y1:y2, x1:x2]
 					roi_crop = frame_bgr[y:y+h, x:x+w]
+					if name == "HCHO" or name == "TVOC":
+						processed = ocr.preprocess_blue(roi_crop)
+					elif name == "PM2.5" or name == "PM10":
+						processed = ocr.preprocess_green(roi_crop)
+					elif name == "CO" or name == "CO2":
+						processed = ocr.preprocess_brown(roi_crop)
 					processed = ocr.preprocess(roi_crop, binarization=True, using_blur=True)
+					#if name == "CO" or name == "PM1.0" or name == "PM2.5":
+					#	processed = ocr.morphology(processed, True, 1)
 					win_roi = name + "-ROI"
 					win_processed = name + "-processed"
 					cv2.imshow(win_roi, roi_crop)
@@ -172,21 +216,23 @@ def cv2Preview():
 							print(ocr_str)
 							results.append("n/a")
 							ocr_error[idx] += 1
+							dump_ocr_fail_image(name, roi_crop, processed)
 					except ValueError:
 						print(f"OCR output = {ocr_str}")
-						now = datetime.now()
-						time_str = now.strftime("%Y-%m-%d_%H_%M_%S")
-						err_name = "error/" + name + f"-{time_str}.png"
-						cv2.imwrite(err_name, roi_crop)
 						results.append("n/a")
 						ocr_error[idx] += 1
+						dump_ocr_fail_image(name, roi_crop, processed)
 					success_rate.append( (ocr_total[idx]-ocr_error[idx]) / ocr_total[idx])
 
 				last_save_time = current_time # Reset timer
 				
-				print(f"-- {results[0]} | {results[1]} | {results[2]}")
+				print(f"-- {results[0]} | {results[1]} | {results[2]} | {results[3]} | {results[4]} | {results[5]}")
 				print(f"total OCR counts = {ocr_total[0]}")
-				print(f"   {success_rate[0]*100}% | {success_rate[1]*100}% | {success_rate[2]*100}%")
+				str_success_rate = "    "
+				for rate in success_rate:
+					str_success_rate += f"{rate*100}% | "
+				print(str_success_rate)
+				#print(f"   {success_rate[0]*100}% | {success_rate[1]*100}% | {success_rate[2]*100}%")
 				if any_hazard:
 					if not fan_enabled:
 						control_fan(True)
@@ -205,7 +251,7 @@ def cv2Preview():
 				if detect_count >= log_interval:
 					detect_count = 0
 					logger.upload_data(GAS_URL,
-						results[0], results[1], results[2], "n/a")
+						results[0], results[1], results[2], results[3])
 
 			# Keyboard Input Handling
 			key = cv2.waitKey(1) & 0xFF
@@ -214,6 +260,9 @@ def cv2Preview():
 			if key == ord('1'): active_idx = 0   # HCHO
 			elif key == ord('2'): active_idx = 1 # CO
 			elif key == ord('3'): active_idx = 2 # CO2
+			elif key == ord('4'): active_idx = 3 # TVOC
+			elif key == ord('5'): active_idx = 4 # PM1.0
+			elif key == ord('6'): active_idx = 5 # PM2.5
 			
 			# 2. Move ROI (w=up, s=down, a=left, d=right)
 			elif key == ord('w'): rois[active_idx]["coords"][1] -= step
@@ -247,6 +296,7 @@ def cv2Preview():
 			
 			# 5. Exit
 			elif key == ord('q'):
+				save_rois(rois)
 				break
 			elif key == ord('c'):
 				now = datetime.now()

@@ -37,8 +37,20 @@ def tesseract_7seg(cv2_img):
 	text = pytesseract.image_to_string(cv2_img, config=custom_config)
 	return text
 
+def morphology(image, morph_open=False, iterations=2):
+	kernel = np.ones((3, 3), np.uint8)
+	op = cv2.MORPH_OPEN if morph_open else cv2.MORPH_CLOSE
+	return cv2.morphologyEx(image, op, kernel, iterations=iterations)
 
-def preprocess(image, using_blur=False, binarization=True, morphology=False):
+def dilate(image, iterations=1):
+	kernel = np.ones((3, 3), np.uint8)
+	return cv2.dilage(image, kernel, iterations=iterations)
+
+def erode(image, iterations=1):
+	kernel = np.ones((3, 3), np.uint8)
+	return cv2.erode(image, kernel, iterations=iterations)
+
+def preprocess(image, using_blur=False, binarization=True):
 	gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 	contrast_enhanced = clahe.apply(gray)
@@ -53,11 +65,28 @@ def preprocess(image, using_blur=False, binarization=True, morphology=False):
 	else:
 		thresh = blurred
 	
-	if morphology:
-		kernel = np.ones((3, 3), np.uint8)
-		fixed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-	else:
-		fixed = thresh
-		
-	return fixed
+	return thresh
 
+def preprocess_green(img):
+	lower = np.array([65, 45, 75])
+	upper = np.array([95, 255, 255])
+	hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+	mask = cv2.inRange(hsv, lower, upper)
+	result = cv2.bitwise_and(img, img, mask=mask)
+	return result
+
+def preprocess_blue(img):
+	lower = np.array([95, 100, 80])
+	upper = np.array([135, 255, 255])
+	hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+	mask = cv2.inRange(hsv, lower, upper)
+	result = cv2.bitwise_and(img, img, mask=mask)
+	return result
+
+def preprocess_brown(img):
+	lower = np.array([25, 0, 60])
+	upper = np.array([90, 255, 255])
+	hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+	mask = cv2.inRange(hsv, lower, upper)
+	result = cv2.bitwise_and(img, img, mask=mask)
+	return result
