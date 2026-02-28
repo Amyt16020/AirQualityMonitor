@@ -101,6 +101,8 @@ def cv2Preview():
 			{"name": "PM2.5", "coords": [250, 450, 100, 40], "digits": 3, "limit": 50.0 }
 		]
 
+	num_of_rois = len(rois)
+	print(f"Num of ROIs = {num_of_rois}")
 	notified = False
 	active_idx = 0  # Default to the first ROI
 	step = 10       # Initial step size, pixels to move per keypress
@@ -133,8 +135,11 @@ def cv2Preview():
 	
 	picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
 	
-	ocr_total = [0, 0, 0, 0, 0, 0]
-	ocr_error = [0, 0, 0, 0, 0, 0]
+	ocr_total = [0 for _ in range(num_of_rois)]
+	ocr_error = [0 for _ in range(num_of_rois)]
+	ocr_retry = [0 for _ in range(num_of_rois)]
+	results = ['n/a' for _ in range(num_of_rois)]
+	success_rate = [0 for _ in range(num_of_rois)]
 	try:
 		while True:
 			frame = picam2.capture_array()
@@ -145,6 +150,8 @@ def cv2Preview():
 			# Status Overlay
 			active_name = rois[active_idx]["name"]
 			cv2.putText(disp, f"Adjusting: {active_name} | Step: {step}", (10, 30),
+					cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 64, 32), 2)
+			cv2.putText(disp, f"Adjusting: {active_name} | Step: {step}", (10, 30),
 					cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 			# Show if timer is ON (Green) or OFF (Red)
 			timer_status = "ON" if timer_enabled else "OFF"
@@ -152,6 +159,7 @@ def cv2Preview():
 			cv2.putText(disp, f"TIMER: {timer_status}", (10, 60),
 					cv2.FONT_HERSHEY_SIMPLEX, 0.6, timer_color, 1)
 			
+			# ===== Draw the ROIs =====
 			for i, roi in enumerate(rois):
 				name = roi["name"]
 				x, y, w, h = roi["coords"]
@@ -173,18 +181,19 @@ def cv2Preview():
 			if timer_enabled:
 				seconds_left = max(0, int(save_interval - (current_time - last_save_time)))
 				cv2.putText(disp, f"Next Detect: {seconds_left}s", (10, 85),
+						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 32, 32), 2)
+				cv2.putText(disp, f"Next Detect: {seconds_left}s", (10, 85),
 						cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
 
 			cv2.imshow("Camera View", disp)
 			
-			# --- Periodic Logic ---
+			# ===== OCR Periodic Logic =====
 			if timer_enabled and (current_time - last_save_time >= save_interval):
 				any_hazard = False
-				results = []
-				success_rate = []
+				#results = [0 for _ in range(num_of_rois)]
+				#success_rate = [0 for _ in range(num_of_rois)]
 				msg = ""
 				for idx, roi in enumerate(rois):
-					value_valid = False
 					name = roi["name"]
 					x, y, w, h = roi["coords"]
 					# Crop the ROI from the frame: frame[y1:y2, x1:x2]
@@ -202,56 +211,69 @@ def cv2Preview():
 					win_processed = name + "-processed"
 					cv2.imshow(win_roi, roi_crop)
 					cv2.imshow(win_processed, processed)
-					ocr_total[idx] += 1
-					try:
-						ret, ocr_str = ocr.ssocr_7seg(processed, roi["digits"])
-						if ret:
-							value = float(ocr_str)
-							# Check against limit
-							is_over_limit = value > roi["limit"]
-							if is_over_limit:
-								any_hazard = True
-							results.append(value)
-						else:
-							print(ocr_str)
-							results.append("n/a")
+					if results[idx] == 'n/a':
+						ocr_total[idx] += 1
+						try:
+							ret, ocr_str = ocr.ssocr_7seg(processed, roi["digits"])
+							if ret:
+								value = float(ocr_str)
+								# Check against limit
+								is_over_limit = value > roi["limit"]
+								if is_over_limit:
+									any_hazard = True
+								results[idx] = value
+							else:
+								print(ocr_str)
+								#results[idx] = "n/a"
+								ocr_error[idx] += 1
+								dump_ocr_fail_image(name, roi_crop, processed)
+						except ValueError:
+							print(f"OCR output = {ocr_str}")
+							#results[idx] = "n/a"
 							ocr_error[idx] += 1
 							dump_ocr_fail_image(name, roi_crop, processed)
-					except ValueError:
-						print(f"OCR output = {ocr_str}")
-						results.append("n/a")
-						ocr_error[idx] += 1
-						dump_ocr_fail_image(name, roi_crop, processed)
-					success_rate.append( (ocr_total[idx]-ocr_error[idx]) / ocr_total[idx])
+					success_rate[idx] = ((ocr_total[idx]-ocr_error[idx]) / ocr_total[idx]) * 100
 
-				last_save_time = current_time # Reset timer
-				
-				print(f"-- {results[0]} | {results[1]} | {results[2]} | {results[3]} | {results[4]} | {results[5]}")
-				print(f"total OCR counts = {ocr_total[0]}")
-				str_success_rate = "    "
-				for rate in success_rate:
-					str_success_rate += f"{rate*100}% | "
-				print(str_success_rate)
-				#print(f"   {success_rate[0]*100}% | {success_rate[1]*100}% | {success_rate[2]*100}%")
-				if any_hazard:
-					if not fan_enabled:
-						control_fan(True)
-					if not notified:
-						notified = True
-						now = datetime.now()
-						time_str = now.strftime("%Y-%m-%d %H:%M:%S")
-						msg = f"WARNING!!\nHCHO: {results[0]}\nCO: {results[1]}\nCO2: {results[2]}\nat {time_str}"
-						notify.send_telegram_msg(info["telegram"], msg)
-				else:
-					if fan_enabled:
-						control_fan(False)
-					if notified:
-						notified = False # Reset flag of notify
-				detect_count += 1
-				if detect_count >= log_interval:
-					detect_count = 0
-					logger.upload_data(GAS_URL,
-						results[0], results[1], results[2], results[3])
+				now = datetime.now()
+				curtime_str = now.strftime("%Y-%m-%d %H:%M:%S")
+				print(f"-- {curtime_str} --")
+				print(f"Val: {results}")
+				#print(f"-- {results[0]} | {results[1]} | {results[2]} | {results[3]} | {results[4]} | {results[5]}")
+				print(f"  error: {ocr_error}")
+				print(f"  total: {ocr_total}")
+				print(f"  Success Rate: {success_rate}")
+				#print(f"total OCR counts = {ocr_total[0]}")
+				#str_success_rate = "    "
+				#for rate in success_rate:
+				#	str_success_rate += f"{rate*100}% | "
+				#print(str_success_rate)
+
+				if not 'n/a' in results:
+					# === Reset timer ===
+					last_save_time = current_time
+					# === FAN control ===
+					if any_hazard:
+						if not fan_enabled:
+							control_fan(True)
+						if not notified:
+							notified = True
+							now = datetime.now()
+							time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+							msg = f"WARNING!!\nHCHO: {results[0]}\nCO: {results[1]}\nCO2: {results[2]}\nat {time_str}"
+							notify.send_telegram_msg(info["telegram"], msg)
+					else:
+						if fan_enabled:
+							control_fan(False)
+						if notified:
+							notified = False # Reset flag of notify
+#					detect_count += 1
+					if detect_count >= log_interval:
+						detect_count = 0
+						logger.upload_data(GAS_URL,
+							results[0], results[1], results[2], results[3])
+					# === Clear result list ===
+					for idx in range(num_of_rois):
+						results[idx] = 'n/a'
 
 			# Keyboard Input Handling
 			key = cv2.waitKey(1) & 0xFF
